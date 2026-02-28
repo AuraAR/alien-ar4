@@ -1,0 +1,986 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>RECLUSIA - Bioluminescent AR</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body { 
+            background: #000;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+            position: fixed;
+            width: 100%;
+            height: 100vh;
+            color: #00ff88;
+        }
+        
+        #videoContainer {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        #cameraFeed {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+        }
+        
+        #arCanvas { 
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 2;
+        }
+        
+        .controls {
+            position: absolute;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 15px;
+            z-index: 10;
+        }
+        
+        .btn {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            border: 3px solid #00ff88;
+            background: rgba(0, 0, 0, 0.8);
+            color: #00ff88;
+            font-size: 20px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+            box-shadow: 0 0 15px rgba(0, 255, 136, 0.3);
+            user-select: none;
+        }
+        
+        .btn:active {
+            transform: scale(0.9);
+            box-shadow: 0 0 25px rgba(0, 255, 136, 0.6);
+        }
+        
+        .btn.active {
+            background: rgba(0, 255, 136, 0.2);
+            box-shadow: 0 0 20px rgba(0, 255, 136, 0.5);
+        }
+        
+        .status {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #00ff88;
+            text-align: center;
+            font-size: 12px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 8px 15px;
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(0, 255, 136, 0.3);
+            z-index: 10;
+            white-space: nowrap;
+        }
+        
+        .start-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #000011, #001122, #000033);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            text-align: center;
+        }
+        
+        .start-screen h1 {
+            font-size: 32px;
+            margin-bottom: 20px;
+            text-shadow: 0 0 20px #00ff88;
+            letter-spacing: 6px;
+            animation: pulse 2s infinite;
+        }
+        
+        .start-screen p {
+            margin: 10px 0;
+            opacity: 0.8;
+        }
+        
+        .start-btn {
+            width: 140px;
+            height: 140px;
+            border-radius: 50%;
+            border: 4px solid #00ff88;
+            background: rgba(0, 0, 0, 0.5);
+            color: #00ff88;
+            font-size: 16px;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 30px rgba(0, 255, 136, 0.5);
+            transition: all 0.3s ease;
+            margin-top: 30px;
+        }
+        
+        .start-btn:active {
+            transform: scale(0.95);
+            box-shadow: 0 0 40px rgba(0, 255, 136, 0.8);
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.7; transform: scale(1.05); }
+        }
+        
+        .hidden { display: none !important; }
+        
+        .camera-switch {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 10;
+        }
+
+        .instructions {
+            position: absolute;
+            bottom: 120px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            color: rgba(0, 255, 136, 0.7);
+            font-size: 11px;
+            z-index: 10;
+            white-space: nowrap;
+        }
+
+        /* Bass flash overlay */
+        #bassFlash {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 3;
+            opacity: 0;
+            transition: opacity 0.05s;
+        }
+
+        @media (max-width: 480px) {
+            .start-screen h1 { font-size: 24px; }
+            .start-btn { width: 120px; height: 120px; }
+            .btn { width: 50px; height: 50px; font-size: 16px; }
+            .controls { bottom: 20px; gap: 10px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="start-screen" id="startScreen">
+        <h1>RECLUSIA</h1>
+        <p style="font-size: 18px; margin: 15px 0;">🌿 Bioluminescent Soundscapes 🌿</p>
+        <p style="font-size: 14px; margin: 20px 0; opacity: 0.9;">
+            📷 Camera + 🎤 Microphone access needed<br>
+            👆 Tap "Allow" when your browser asks
+        </p>
+        <p style="font-size: 12px; margin-bottom: 20px; opacity: 0.6;">
+            Transform into an alien being surrounded by glowing plants
+        </p>
+        <button class="start-btn" onclick="startAR()">
+            <div>🌌</div>
+            <div style="margin-top: 5px;">ENTER</div>
+        </button>
+    </div>
+    
+    <div id="videoContainer" class="hidden">
+        <video id="cameraFeed" autoplay muted playsinline></video>
+        <canvas id="arCanvas"></canvas>
+        <div id="bassFlash"></div>
+    </div>
+    
+    <div class="status hidden" id="status">Initializing alien technology...</div>
+    
+    <div class="controls hidden" id="controls">
+        <button class="btn" id="micBtn" title="Toggle Audio">🎤</button>
+        <button class="btn" id="plantsBtn" title="Toggle Plants">🌿</button>
+        <button class="btn" id="alienBtn" title="Alien Face">👽</button>
+        <button class="btn" id="colorBtn" title="Change Colors">🎨</button>
+    </div>
+    
+    <div class="camera-switch hidden" id="cameraSwitch">
+        <button class="btn" id="flipBtn" title="Flip Camera">🔄</button>
+    </div>
+
+    <div class="instructions hidden" id="instructions">
+        Tap 🎤 for audio reactive mode • 👽 to morph your face
+    </div>
+
+    <script>
+        let video, canvas, ctx, audioContext, analyser, microphone;
+        let plants = [], particles = [];
+        let micActive = false, cameraActive = false, plantsActive = true, alienActive = false;
+        let facingMode = 'user', currentColors = 0, time = 0;
+        let width, height;
+
+        // Face mesh state
+        let faceMesh = null;
+        let faceResults = null;
+        let faceMeshReady = false;
+        let mpCamera = null;
+
+        // Smoothed audio values for visual continuity
+        let smoothBass = 0, smoothMid = 0, smoothHigh = 0, smoothAvg = 0;
+        let lastBassHit = 0;
+
+        // Bioluminescent color palettes
+        const colorPalettes = [
+            { plant: '#00ff88', accent: '#66ffb2', glow: '#00ffaa', alien: '#00ff88', flash: 'rgba(0,255,136,0.12)' },
+            { plant: '#8a2be2', accent: '#ff1493', glow: '#00bfff', alien: '#da70d6', flash: 'rgba(138,43,226,0.12)' },
+            { plant: '#ffd700', accent: '#ff8c00', glow: '#ba55d3', alien: '#ffb347', flash: 'rgba(255,215,0,0.12)' },
+            { plant: '#32cd32', accent: '#ffffff', glow: '#87ceeb', alien: '#98fb98', flash: 'rgba(50,205,50,0.12)' },
+            { plant: '#ff69b4', accent: '#40e0d0', glow: '#ee82ee', alien: '#ff1493', flash: 'rgba(255,105,180,0.12)' }
+        ];
+        
+        const plantTypes = ['fern', 'coral', 'vine', 'mushroom', 'crystal', 'tendril'];
+
+        // ─── MediaPipe Face Mesh Setup ────────────────────────────────────────────
+
+        function initFaceMesh() {
+            if (typeof FaceMesh === 'undefined') {
+                console.warn('MediaPipe not loaded, alien mode will use fallback');
+                return;
+            }
+            faceMesh = new FaceMesh({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+            });
+            faceMesh.setOptions({
+                maxNumFaces: 1,
+                refineLandmarks: true,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+            faceMesh.onResults((results) => {
+                faceResults = results;
+            });
+            faceMeshReady = true;
+        }
+
+        function startFaceMeshCamera() {
+            if (!faceMeshReady || !faceMesh) return;
+            if (typeof Camera === 'undefined') return;
+            mpCamera = new Camera(video, {
+                onFrame: async () => {
+                    if (alienActive && faceMesh) {
+                        await faceMesh.send({ image: video });
+                    }
+                },
+                width: 640,
+                height: 480
+            });
+            mpCamera.start();
+        }
+
+        // ─── App Init ─────────────────────────────────────────────────────────────
+
+        async function startAR() {
+            try {
+                document.getElementById('startScreen').classList.add('hidden');
+                document.getElementById('videoContainer').classList.remove('hidden');
+                document.getElementById('status').classList.remove('hidden');
+                document.getElementById('controls').classList.remove('hidden');
+                document.getElementById('cameraSwitch').classList.remove('hidden');
+                document.getElementById('instructions').classList.remove('hidden');
+                
+                await initCamera();
+                await initAudio();
+                initFaceMesh();
+                setupControls();
+                startAnimation();
+                generateInitialPlants();
+            } catch (error) {
+                console.error('Failed to start AR:', error);
+                showError('Failed to initialize. Please check camera permissions.');
+            }
+        }
+        
+        async function initCamera() {
+            try {
+                video = document.getElementById('cameraFeed');
+                canvas = document.getElementById('arCanvas');
+                ctx = canvas.getContext('2d');
+                updateStatus('Requesting camera access...');
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } }
+                });
+                video.srcObject = stream;
+                cameraActive = true;
+                updateStatus('🌿 AR Active — tap 👽 to morph your face');
+                video.addEventListener('loadedmetadata', () => { resizeCanvas(); });
+            } catch (error) {
+                console.error('Camera error:', error);
+                updateStatus('❌ Camera access denied');
+                showCameraHelp();
+            }
+        }
+        
+        function showCameraHelp() {
+            const helpDiv = document.createElement('div');
+            helpDiv.style.cssText = `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+                background:rgba(0,0,0,0.95);color:#00ff88;padding:30px;border-radius:15px;
+                text-align:center;border:2px solid #00ff88;z-index:1000;max-width:90%;
+                box-shadow:0 0 30px rgba(0,255,136,0.5);`;
+            helpDiv.innerHTML = `<h3 style="margin-bottom:15px;">📷 Camera Access Required</h3>
+                <p style="margin:10px 0;font-size:14px;">1. Refresh this page<br>2. Click "Allow" when browser asks<br>3. Make sure camera isn't used by another app</p>
+                <button onclick="location.reload()" style="margin-top:20px;padding:12px 24px;background:#00ff88;color:black;border:none;border-radius:8px;cursor:pointer;font-weight:bold;">Try Again</button>`;
+            document.body.appendChild(helpDiv);
+        }
+        
+        async function initAudio() {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 512;
+                analyser.smoothingTimeConstant = 0.75;
+            } catch (error) { console.error('Audio init failed:', error); }
+        }
+        
+        function resizeCanvas() {
+            const rect = video.getBoundingClientRect();
+            width = canvas.width = rect.width || window.innerWidth;
+            height = canvas.height = rect.height || window.innerHeight;
+            generateInitialPlants();
+        }
+        
+        function updateStatus(message) {
+            const el = document.getElementById('status');
+            el.textContent = message;
+            el.style.opacity = '1';
+            setTimeout(() => { el.style.opacity = '0.6'; }, 3000);
+        }
+        
+        function showError(msg) { updateStatus(`❌ ${msg}`); }
+        
+        function setupControls() {
+            document.getElementById('micBtn').onclick = toggleMicrophone;
+            document.getElementById('plantsBtn').onclick = togglePlants;
+            document.getElementById('alienBtn').onclick = toggleAlienMode;
+            document.getElementById('colorBtn').onclick = switchColors;
+            document.getElementById('flipBtn').onclick = flipCamera;
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+        }
+        
+        async function toggleMicrophone() {
+            const btn = document.getElementById('micBtn');
+            if (!micActive) {
+                try {
+                    if (audioContext?.state === 'suspended') await audioContext.resume();
+                    const stream = await navigator.mediaDevices.getUserMedia({
+                        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+                    });
+                    microphone = audioContext.createMediaStreamSource(stream);
+                    microphone.connect(analyser);
+                    micActive = true;
+                    btn.classList.add('active');
+                    updateStatus('🎵 Audio reactive mode ON');
+                } catch (e) {
+                    console.error('Mic error:', e);
+                    updateStatus('❌ Microphone access denied');
+                }
+            } else {
+                microphone?.disconnect();
+                microphone = null;
+                micActive = false;
+                btn.classList.remove('active');
+                updateStatus('🔇 Audio mode OFF');
+            }
+        }
+        
+        function togglePlants() {
+            const btn = document.getElementById('plantsBtn');
+            plantsActive = !plantsActive;
+            if (plantsActive) {
+                btn.classList.add('active');
+                updateStatus('🌿 Bioluminescent plants growing');
+                generateInitialPlants();
+            } else {
+                btn.classList.remove('active');
+                updateStatus('🌑 Plants dormant');
+                plants = [];
+            }
+        }
+        
+        function toggleAlienMode() {
+            const btn = document.getElementById('alienBtn');
+            alienActive = !alienActive;
+            if (alienActive) {
+                btn.classList.add('active');
+                updateStatus('👽 Alien transformation — face the camera');
+                if (faceMeshReady && !mpCamera) startFaceMeshCamera();
+            } else {
+                btn.classList.remove('active');
+                faceResults = null;
+                updateStatus('👤 Human form restored');
+            }
+        }
+        
+        function switchColors() {
+            currentColors = (currentColors + 1) % colorPalettes.length;
+            const names = ['Ocean', 'Mystic', 'Aurora', 'Arctic', 'Coral'];
+            updateStatus(`🎨 ${names[currentColors]} palette`);
+        }
+        
+        async function flipCamera() {
+            facingMode = facingMode === 'user' ? 'environment' : 'user';
+            if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } }
+                });
+                video.srcObject = stream;
+                updateStatus(facingMode === 'user' ? '🤳 Front camera' : '📷 Back camera');
+            } catch (e) {
+                facingMode = facingMode === 'user' ? 'environment' : 'user';
+                updateStatus('❌ Camera flip failed');
+            }
+        }
+
+        // ─── Audio ────────────────────────────────────────────────────────────────
+
+        function getAudioData() {
+            time += 0.016;
+
+            if (!analyser || !micActive) {
+                // Demo mode — gentle ambient movement
+                const demo = {
+                    bass: 0.25 + Math.sin(time * 0.7) * 0.12,
+                    mid:  0.20 + Math.sin(time * 1.1) * 0.10,
+                    high: 0.15 + Math.sin(time * 2.3) * 0.08,
+                    average: 0.22 + Math.sin(time * 1.4) * 0.09,
+                    spectrum: new Array(128).fill(0).map((_, i) =>
+                        50 + Math.sin(time + i * 0.1) * 18 + Math.random() * 10)
+                };
+                updateSmoothed(demo);
+                return demo;
+            }
+
+            const buf = analyser.frequencyBinCount;
+            const data = new Uint8Array(buf);
+            analyser.getByteFrequencyData(data);
+
+            const raw = {
+                bass:    avg(data, 0,               Math.floor(buf * 0.15)),
+                mid:     avg(data, Math.floor(buf * 0.15), Math.floor(buf * 0.5)),
+                high:    avg(data, Math.floor(buf * 0.5),  buf),
+                average: avg(data, 0, buf),
+                spectrum: Array.from(data)
+            };
+            updateSmoothed(raw);
+            return raw;
+        }
+
+        function updateSmoothed(d) {
+            const s = 0.15; // smoothing speed
+            smoothBass = smoothBass + (d.bass    - smoothBass) * s;
+            smoothMid  = smoothMid  + (d.mid     - smoothMid)  * s;
+            smoothHigh = smoothHigh + (d.high    - smoothHigh) * s;
+            smoothAvg  = smoothAvg  + (d.average - smoothAvg)  * s;
+        }
+
+        function avg(arr, s, e) {
+            let sum = 0;
+            for (let i = s; i < e; i++) sum += arr[i];
+            return (sum / (e - s)) / 255;
+        }
+
+        // ─── Plants ───────────────────────────────────────────────────────────────
+
+        function generateInitialPlants() {
+            if (!plantsActive || !width) return;
+            plants = [];
+            for (let i = 0; i < 14; i++) {
+                plants.push(makePlant());
+            }
+        }
+
+        function makePlant(xOverride) {
+            return {
+                x: xOverride !== undefined ? xOverride : Math.random() * width,
+                y: height * 0.35 + Math.random() * height * 0.6,
+                type: plantTypes[Math.floor(Math.random() * plantTypes.length)],
+                size: 0.35 + Math.random() * 0.65,
+                depth: Math.random(),
+                baseHeight: 20 + Math.random() * 60,
+                swayPhase: Math.random() * Math.PI * 2,
+                glowIntensity: 0.5 + Math.random() * 0.5,
+                segments: 3 + Math.floor(Math.random() * 5),
+                angle: -Math.PI / 4 + Math.random() * Math.PI / 2,
+                swayAmount: 0,
+                currentGlow: 0.5,
+                currentHeight: 40
+            };
+        }
+        
+        function updatePlants() {
+            if (!plantsActive) return;
+            plants.forEach(plant => {
+                // Much stronger audio reactivity
+                const audioSway = smoothBass * 3.5 + smoothMid * 1.2;
+                plant.swayAmount = Math.sin(time * 2.2 + plant.swayPhase) * (0.5 + audioSway);
+                plant.currentGlow = plant.glowIntensity * (0.5 + smoothAvg * 2.5);
+                const bassKick = smoothBass > 0.45 ? (smoothBass - 0.45) * 3 : 0;
+                plant.currentHeight = plant.baseHeight * (1 + bassKick * 0.8);
+            });
+        }
+
+        // ─── Alien Face Morph ─────────────────────────────────────────────────────
+
+        // Key MediaPipe landmark indices
+        const FACE_OUTLINE = [10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109];
+        const LEFT_EYE     = [33,7,163,144,145,153,154,155,133,173,157,158,159,160,161,246];
+        const RIGHT_EYE    = [362,382,381,380,374,373,390,249,263,466,388,387,386,385,384,398];
+        const NOSE_TIP     = 1;
+        const CHIN         = 152;
+        const FOREHEAD     = 10;
+
+        function lm(landmarks, idx) {
+            // Returns canvas coords from a normalised landmark, mirrored to match video
+            const l = landmarks[idx];
+            return { x: (1 - l.x) * width, y: l.y * height };
+        }
+
+        function renderAlienFace(audioData) {
+            if (!alienActive) return;
+
+            const colors = colorPalettes[currentColors];
+            const hasTracking = faceResults?.multiFaceLandmarks?.length > 0;
+
+            if (hasTracking) {
+                renderTrackedAlien(faceResults.multiFaceLandmarks[0], audioData, colors);
+            } else {
+                renderFallbackAlien(audioData, colors);
+            }
+        }
+
+        function renderTrackedAlien(landmarks, audioData, colors) {
+            const bassBoost  = 1 + smoothBass * 2.2;
+            const highFlick  = smoothHigh * 1.5;
+            const pulseAlpha = 0.7 + smoothAvg * 0.5;
+
+            ctx.save();
+            ctx.globalCompositeOperation = 'screen';
+
+            // ── 1. Elongated skull warp ─────────────────────────────────────────
+            const top    = lm(landmarks, FOREHEAD);
+            const bottom = lm(landmarks, CHIN);
+            const faceH  = bottom.y - top.y;
+            const centerX = (top.x + bottom.x) / 2;
+            const elongate = 0.35 + smoothBass * 0.25; // skull stretches with bass
+
+            ctx.shadowColor = colors.alien;
+            ctx.shadowBlur  = 30 + smoothAvg * 60;
+            ctx.strokeStyle = colors.alien;
+            ctx.lineWidth   = 2.5;
+            ctx.globalAlpha = 0.55 * pulseAlpha;
+
+            // Draw warped face outline — elongate vertically
+            ctx.beginPath();
+            FACE_OUTLINE.forEach((idx, i) => {
+                const p = lm(landmarks, idx);
+                // Push top landmarks up, bottom down
+                const relY = p.y - top.y;
+                const warpY = top.y + relY * (1 + elongate * (relY / faceH));
+                const warpX = centerX + (p.x - centerX) * (0.85 + smoothMid * 0.15);
+                if (i === 0) ctx.moveTo(warpX, warpY);
+                else ctx.lineTo(warpX, warpY);
+            });
+            ctx.closePath();
+            ctx.stroke();
+
+            // Subtle fill for alien skin tone
+            ctx.globalAlpha = 0.18 + smoothAvg * 0.12;
+            ctx.fillStyle = colors.alien;
+            ctx.fill();
+
+            // ── 2. Giant glowing eyes ───────────────────────────────────────────
+            const eyeScale = 1.8 + smoothBass * 1.2; // eyes pulse with bass
+            [[LEFT_EYE, -1], [RIGHT_EYE, 1]].forEach(([eye, side]) => {
+                const pts = eye.map(i => lm(landmarks, i));
+                const ex  = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+                const ey  = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+                const ew  = Math.abs(pts[0].x - pts[8].x) * eyeScale;
+                const eh  = ew * 0.65;
+
+                // Outer glow
+                ctx.globalAlpha = 0.35 + smoothAvg * 0.4;
+                ctx.shadowBlur  = 40 + smoothBass * 50;
+                ctx.fillStyle   = colors.alien;
+                ctx.beginPath();
+                ctx.ellipse(ex, ey, ew * 1.2, eh * 1.2, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Main eye
+                ctx.globalAlpha = 0.85;
+                ctx.fillStyle   = colors.glow;
+                ctx.beginPath();
+                ctx.ellipse(ex, ey, ew, eh, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Pupil — vertical slit
+                ctx.fillStyle   = '#000';
+                ctx.globalAlpha = 0.9;
+                ctx.beginPath();
+                ctx.ellipse(ex, ey, ew * 0.18, eh * 0.8, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Inner glint
+                ctx.fillStyle   = '#fff';
+                ctx.globalAlpha = 0.6 + highFlick * 0.4;
+                ctx.beginPath();
+                ctx.ellipse(ex - ew * 0.2, ey - eh * 0.2, ew * 0.1, eh * 0.1, 0, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // ── 3. Bioluminescent vein patterns ────────────────────────────────
+            ctx.globalAlpha = 0.3 + smoothMid * 0.5;
+            ctx.strokeStyle = colors.accent;
+            ctx.lineWidth   = 1;
+            ctx.shadowBlur  = 8 + smoothHigh * 20;
+
+            const nosePt = lm(landmarks, NOSE_TIP);
+            // Forehead veins
+            for (let v = 0; v < 5; v++) {
+                const startIdx = FACE_OUTLINE[Math.floor(v * FACE_OUTLINE.length / 5)];
+                const start    = lm(landmarks, startIdx);
+                ctx.beginPath();
+                ctx.moveTo(nosePt.x + (Math.random()-0.5)*10, nosePt.y - faceH*0.1);
+                ctx.quadraticCurveTo(
+                    (nosePt.x + start.x) / 2 + (Math.random()-0.5) * 20,
+                    (nosePt.y + start.y) / 2,
+                    start.x, start.y
+                );
+                ctx.stroke();
+            }
+
+            // ── 4. Antennae growing from head on bass hits ──────────────────────
+            ctx.globalAlpha = 0.6 + smoothBass * 0.4;
+            ctx.strokeStyle = colors.glow;
+            ctx.lineWidth   = 2;
+            ctx.shadowBlur  = 15 + smoothBass * 35;
+            const antennaLen = faceH * (0.5 + smoothBass * 0.7);
+            [-0.3, 0, 0.3].forEach(offset => {
+                const ax = top.x + offset * faceH * 0.4;
+                const ay = top.y - 10;
+                ctx.beginPath();
+                ctx.moveTo(ax, ay);
+                ctx.quadraticCurveTo(
+                    ax + Math.sin(time * 3 + offset * 5) * 20,
+                    ay - antennaLen * 0.6,
+                    ax + offset * 15,
+                    ay - antennaLen
+                );
+                ctx.stroke();
+                // Glowing tip orb
+                ctx.beginPath();
+                ctx.arc(ax + offset * 15, ay - antennaLen, 4 + smoothBass * 6, 0, Math.PI * 2);
+                ctx.fillStyle = colors.accent;
+                ctx.fill();
+            });
+
+            // ── 5. Aura rings ────────────────────────────────────────────────────
+            for (let ring = 0; ring < 3; ring++) {
+                const r      = faceH * (0.6 + ring * 0.22 + smoothBass * 0.3);
+                const alpha  = (0.12 - ring * 0.03) * bassBoost;
+                ctx.globalAlpha = Math.min(alpha, 0.4);
+                ctx.strokeStyle = colors.alien;
+                ctx.lineWidth   = 1.5 - ring * 0.3;
+                ctx.shadowBlur  = 20;
+                ctx.beginPath();
+                ctx.ellipse(centerX, top.y + faceH * 0.45, r * 0.75, r, 0, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            ctx.restore();
+        }
+
+        function renderFallbackAlien(audioData, colors) {
+            // Original fallback when no face is detected
+            const cx = width / 2, cy = height / 2 - 50;
+            const bassBoost = 1 + smoothBass * 2;
+
+            ctx.save();
+            ctx.globalCompositeOperation = 'screen';
+            ctx.shadowColor = colors.alien;
+            ctx.shadowBlur  = 20 + smoothAvg * 40;
+
+            // Pulsing eyes
+            const eyePulse = 20 + smoothBass * 30;
+            [[cx - 40, cy], [cx + 40, cy]].forEach(([ex, ey]) => {
+                ctx.fillStyle   = colors.alien;
+                ctx.globalAlpha = 0.7 + smoothAvg * 0.3;
+                ctx.beginPath();
+                ctx.ellipse(ex, ey, 14 + smoothBass * 8, 20 + smoothBass * 12, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle   = '#000';
+                ctx.globalAlpha = 0.9;
+                ctx.beginPath();
+                ctx.ellipse(ex, ey, 4, 14, 0, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Aura
+            for (let r = 0; r < 3; r++) {
+                ctx.strokeStyle = colors.alien;
+                ctx.lineWidth   = 1;
+                ctx.globalAlpha = (0.1 - r * 0.03) * bassBoost;
+                ctx.beginPath();
+                ctx.arc(cx, cy, (90 + r * 25) * bassBoost, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            ctx.globalAlpha = 0.5;
+            ctx.fillStyle   = colors.glow;
+            ctx.font        = '13px Courier New';
+            ctx.textAlign   = 'center';
+            ctx.fillText('FACE CAMERA TO ACTIVATE MORPH', cx, cy + 80);
+
+            ctx.restore();
+        }
+
+        // ─── Bass Flash ───────────────────────────────────────────────────────────
+
+        function triggerBassFlash(audioData) {
+            if (!micActive) return;
+            const now = Date.now();
+            if (smoothBass > 0.55 && now - lastBassHit > 120) {
+                lastBassHit = now;
+                const flash = document.getElementById('bassFlash');
+                const pal   = colorPalettes[currentColors];
+                flash.style.background = `radial-gradient(ellipse at center, ${pal.flash} 0%, transparent 70%)`;
+                flash.style.opacity = smoothBass * 0.8;
+                setTimeout(() => { flash.style.opacity = 0; }, 80);
+            }
+        }
+
+        // ─── Plant Rendering (unchanged logic, stronger glow) ─────────────────────
+
+        function renderPlants() {
+            if (!plantsActive) return;
+            const colors = colorPalettes[currentColors];
+            const sorted = [...plants].sort((a, b) => a.depth - b.depth);
+            sorted.forEach(plant => {
+                const alpha = 0.4 + plant.depth * 0.4;
+                ctx.save();
+                ctx.globalAlpha = alpha;
+                ctx.shadowColor = colors.plant;
+                ctx.shadowBlur  = 20 + plant.currentGlow * 35; // stronger glow
+                const x = plant.x + plant.swayAmount * 28;     // more sway
+                const y = plant.y;
+                const h = plant.currentHeight * plant.size;
+                if      (plant.type === 'fern')     renderFern(x, y, h, plant.segments, colors.plant, colors.accent);
+                else if (plant.type === 'coral')    renderCoral(x, y, h, plant.segments, colors.plant, colors.glow);
+                else if (plant.type === 'vine')     renderVine(x, y, h, plant.segments, plant.swayAmount, colors.accent, colors.plant);
+                else if (plant.type === 'mushroom') renderMushroom(x, y, h, colors.glow, colors.plant);
+                else if (plant.type === 'crystal')  renderCrystal(x, y, h, plant.angle, colors.accent, colors.glow);
+                else if (plant.type === 'tendril')  renderTendril(x, y, h, plant.swayAmount, colors.plant, colors.accent);
+                ctx.restore();
+            });
+        }
+        
+        function renderFern(x, y, height, segments, color1, color2) {
+            ctx.strokeStyle = color1; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - height); ctx.stroke();
+            for (let i = 0; i < segments; i++) {
+                const fy = y - (height / segments) * i;
+                const fs = (height / segments) * 0.6;
+                ctx.strokeStyle = i % 2 === 0 ? color1 : color2; ctx.lineWidth = 1;
+                ctx.beginPath(); ctx.moveTo(x, fy);
+                ctx.quadraticCurveTo(x - fs, fy - fs/2, x - fs/2, fy - fs); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(x, fy);
+                ctx.quadraticCurveTo(x + fs, fy - fs/2, x + fs/2, fy - fs); ctx.stroke();
+            }
+        }
+        
+        function renderCoral(x, y, height, segments, color1, color2) {
+            ctx.fillStyle = color1;
+            ctx.beginPath(); ctx.arc(x, y, height * 0.2, 0, Math.PI * 2); ctx.fill();
+            for (let i = 0; i < segments; i++) {
+                const angle = (i / segments) * Math.PI * 2;
+                const bl = height * (0.3 + Math.random() * 0.4);
+                const bx = x + Math.cos(angle) * height * 0.15;
+                const by = y + Math.sin(angle) * height * 0.15;
+                ctx.strokeStyle = i % 2 === 0 ? color1 : color2; ctx.lineWidth = 3; ctx.lineCap = 'round';
+                ctx.beginPath(); ctx.moveTo(bx, by);
+                ctx.lineTo(bx + Math.cos(angle) * bl, by + Math.sin(angle) * bl); ctx.stroke();
+                ctx.fillStyle = color2;
+                ctx.beginPath(); ctx.arc(bx + Math.cos(angle) * bl, by + Math.sin(angle) * bl, 2, 0, Math.PI * 2); ctx.fill();
+            }
+        }
+        
+        function renderVine(x, y, height, segments, sway, color1, color2) {
+            ctx.strokeStyle = color1; ctx.lineWidth = 3; ctx.lineCap = 'round';
+            ctx.beginPath(); ctx.moveTo(x, y);
+            for (let i = 1; i <= segments; i++) {
+                const sy = y - (height / segments) * i;
+                const sx = x + Math.sin(i * 0.5 + sway) * 15;
+                if (i === 1) ctx.lineTo(sx, sy);
+                else ctx.quadraticCurveTo(sx, sy - 10, sx, sy);
+                if (i % 2 === 0) {
+                    ctx.fillStyle = color2;
+                    ctx.beginPath(); ctx.ellipse(sx + 8, sy, 5, 10, Math.PI/4, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.ellipse(sx - 8, sy, 5, 10, -Math.PI/4, 0, Math.PI * 2); ctx.fill();
+                }
+            }
+            ctx.stroke();
+        }
+        
+        function renderMushroom(x, y, height, color1, color2) {
+            const capSize = height * 0.4, stemH = height * 0.6;
+            ctx.fillStyle = color2; ctx.fillRect(x - 3, y - stemH, 6, stemH);
+            ctx.fillStyle = color1; ctx.beginPath(); ctx.arc(x, y - stemH, capSize, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = color2;
+            for (let i = 0; i < 4; i++) {
+                const a = (i / 4) * Math.PI * 2;
+                ctx.beginPath(); ctx.arc(x + Math.cos(a) * capSize * 0.5, y - stemH + Math.sin(a) * capSize * 0.5, 2, 0, Math.PI * 2); ctx.fill();
+            }
+        }
+        
+        function renderCrystal(x, y, height, angle, color1, color2) {
+            ctx.save(); ctx.translate(x, y); ctx.rotate(angle);
+            const pts = [[0,-height],[-height*0.3,-height*0.7],[-height*0.2,0],[height*0.2,0],[height*0.3,-height*0.7]];
+            ctx.fillStyle = color1; ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]);
+            pts.slice(1).forEach(p => ctx.lineTo(p[0], p[1])); ctx.closePath(); ctx.fill();
+            ctx.fillStyle = color2; ctx.beginPath(); ctx.moveTo(0,-height*0.8);
+            ctx.lineTo(-height*0.15,-height*0.5); ctx.lineTo(0,-height*0.2); ctx.lineTo(height*0.15,-height*0.5); ctx.closePath(); ctx.fill();
+            ctx.restore();
+        }
+        
+        function renderTendril(x, y, height, sway, color1, color2) {
+            ctx.strokeStyle = color1; ctx.lineWidth = 2; ctx.lineCap = 'round';
+            ctx.beginPath(); ctx.moveTo(x, y);
+            for (let i = 0; i < 20; i++) {
+                const t = i / 20;
+                const sx = x + Math.sin(t * Math.PI * 4 + sway) * t * 15;
+                const sy = y - t * height;
+                ctx.lineTo(sx, sy);
+                if (i % 3 === 0) {
+                    ctx.save(); ctx.fillStyle = color2; ctx.shadowBlur = 8; ctx.shadowColor = color2;
+                    ctx.beginPath(); ctx.arc(sx, sy, 1.5, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+                }
+            }
+            ctx.stroke();
+        }
+
+        // ─── Particles ────────────────────────────────────────────────────────────
+
+        function addParticleEffects(audioData) {
+            const colors = colorPalettes[currentColors];
+            // More particles when audio is active
+            const spawnRate = micActive ? 0.4 + smoothAvg * 1.2 : 0.15;
+            if (Math.random() < spawnRate) {
+                particles.push({
+                    x: Math.random() * width, y: height + 20,
+                    vx: (Math.random() - 0.5) * 2, vy: -1 - Math.random() * 2 - smoothBass * 2,
+                    size: 1 + Math.random() * 3 + smoothBass * 3,
+                    color: Math.random() > 0.5 ? colors.plant : colors.accent,
+                    life: 1.0, fadeRate: 0.004 + Math.random() * 0.006
+                });
+            }
+            // Bigger bass bursts
+            if (smoothBass > 0.5 && Math.random() < 0.6) {
+                for (let i = 0; i < 8; i++) {
+                    particles.push({
+                        x: width/2 + (Math.random()-0.5) * 300,
+                        y: height/2 + (Math.random()-0.5) * 300,
+                        vx: (Math.random()-0.5) * 7, vy: (Math.random()-0.5) * 7,
+                        size: 2 + Math.random() * 5,
+                        color: colors.glow, life: 1.0, fadeRate: 0.025
+                    });
+                }
+            }
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.x += p.vx; p.y += p.vy; p.life -= p.fadeRate;
+                if (p.life <= 0 || p.y < -50 || p.x < -50 || p.x > width + 50) particles.splice(i, 1);
+            }
+        }
+        
+        function renderParticles() {
+            particles.forEach(p => {
+                ctx.save();
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle   = p.color;
+                ctx.shadowColor = p.color;
+                ctx.shadowBlur  = 10 + smoothBass * 15;
+                ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+                ctx.restore();
+            });
+        }
+
+        // ─── Render Loop ──────────────────────────────────────────────────────────
+
+        function render(audioData) {
+            if (!ctx || !canvas) return;
+            // Stronger trail fade when audio is loud
+            const trailAlpha = micActive ? 0.04 + smoothBass * 0.06 : 0.03;
+            ctx.fillStyle = `rgba(0,0,0,${trailAlpha})`;
+            ctx.fillRect(0, 0, width, height);
+            ctx.globalCompositeOperation = 'screen';
+            renderPlants();
+            renderAlienFace(audioData);
+            renderParticles();
+            ctx.globalCompositeOperation = 'source-over';
+        }
+        
+        function startAnimation() {
+            function animate() {
+                if (cameraActive) {
+                    const audioData = getAudioData();
+                    updatePlants();
+                    addParticleEffects(audioData);
+                    triggerBassFlash(audioData);
+                    render(audioData);
+                    if (particles.length > 300) particles.splice(0, particles.length - 300);
+                }
+                requestAnimationFrame(animate);
+            }
+            animate();
+        }
+        
+        // Auto-grow plants
+        setInterval(() => {
+            if (plantsActive && plants.length < 16) plants.push(makePlant());
+        }, 2500);
+        
+        // Prevent mobile scroll/zoom
+        document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+        document.addEventListener('gesturestart', e => e.preventDefault());
+        document.addEventListener('gesturechange', e => e.preventDefault());
+        
+        window.addEventListener('orientationchange', () => {
+            setTimeout(() => {
+                resizeCanvas();
+                if (plantsActive) generateInitialPlants();
+            }, 500);
+        });
+    </script>
+</body>
+</html>
